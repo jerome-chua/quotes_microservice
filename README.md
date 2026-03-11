@@ -1,6 +1,6 @@
 # Inspirational Quote Microservice
 
-A lightweight ZeroMQ microservice that returns a random inspirational quote when called with no input.
+A lightweight Flask microservice that returns a random, playful inspirational quote. Quotes are sourced from a built-in pool or generated via Groq LLM, and consecutive duplicates are never returned.
 
 ## Prerequisites
 
@@ -21,86 +21,134 @@ A lightweight ZeroMQ microservice that returns a random inspirational quote when
    source venv/bin/activate
    ```
 
-3. Install the required dependency:
+3. Install the required dependencies:
+
    ```
-   pip3 install pyzmq
+   pip3 install flask flask-cors groq python-dotenv
    ```
 
-## Running the Microservice
+4. Create a `.env` file on root with your Groq API key:
+   ```
+   GROQ_API_KEY=your_api_key_here
+   ```
+   If no key is provided, the service will still work using the local quote pool as a fallback.
+
+## Running the Service
 
 ```
-python quotes_microservice.py
+python app.py
 ```
 
-You should see:
+The server will be available at `http://localhost:5001`.
 
+## HTTP API Endpoints
+
+### `GET /quote`
+
+Returns a random inspirational quote.
+
+**Request:**
 ```
-Inspirational Quote Microservice is running on port 5556...
-```
-
-The server will keep running and listen for requests on `tcp://localhost:5556`.
-
-## How to Request a Quote
-
-Send a JSON string over a ZMQ REQ socket with `"input"` set to `null` (or omitted entirely, or an empty string).
-
-### Example Client (Python)
-
-```python
-import zmq
-import json
-
-context = zmq.Context()
-socket = context.socket(zmq.REQ)
-socket.connect("tcp://localhost:5556")
-
-# Send a request with no input
-socket.send_string(json.dumps({"input": None}))
-
-# Receive the response
-response = json.loads(socket.recv_string())
-print(response["quote"])
+GET http://localhost:5001/quote
 ```
 
-### Request Format
-
-| Field   | Type                    | Description                              |
-| ------- | ----------------------- | ---------------------------------------- |
-| `input` | `null` / `""` / omitted | Must be empty or null to receive a quote |
-
-### Response Format
-
-**Success:**
-
+**Response (200):**
 ```json
 {
-  "quote": "Believe you can & you're halfway there."
+  "quote": "Believe you can & you're halfway there. (No pressure though.)",
+  "fallback_used": false
 }
 ```
 
-**Error (non-empty input provided):**
+- `fallback_used`: `false` means the quote came from the LLM, `true` means it came from the local pool.
+
+### `POST /quote`
+
+Adds a new quote to the pool dynamically.
+
+**Request:**
+```
+POST http://localhost:5001/quote
+Content-Type: application/json
+
+{
+  "quote": "Stay curious, stay caffeinated."
+}
+```
+
+**Response (201):**
+```json
+{
+  "status": "Quote added successfully."
+}
+```
+
+### Error Responses
+
+| Status | Meaning                                    |
+| ------ | ------------------------------------------ |
+| 400    | Bad request (invalid input or duplicate quote) |
+| 500    | Unexpected server error                    |
 
 ```json
 {
-  "error": "Input must be empty/null to receive a quote."
+  "error": "Description of the error."
 }
+```
+
+## Frontend Integration Example
+
+```javascript
+// Fetch a quote
+const response = await fetch("http://localhost:5001/quote");
+const data = await response.json();
+console.log(data.quote);
+
+// Add a new quote
+await fetch("http://localhost:5001/quote", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ quote: "Stay curious, stay caffeinated." }),
+});
+```
+
+CORS is enabled, so requests from any origin (e.g., a local React/Vue dev server) will work out of the box.
+
+## Architecture
+
+```
+Frontend (any origin)
+    |
+    |  HTTP (port 5001)
+    v
+Flask Server (app.py)
+    |
+    |  (optional) Groq API
+    v
+LLM Quote Generation
 ```
 
 ## Communication Contract
 
-- **Protocol:** ZeroMQ (REQ/REP pattern)
-- **Port:** 5556
-- **Data format:** JSON strings sent/received via `send_string` / `recv_string`
+- **Port:** 5001
+- **Data format:** JSON
+- **CORS:** Enabled for all origins
+- **No consecutive duplicates:** The service tracks the last returned quote and guarantees a different one each time.
 
 ## UML Sequence Diagram
 
 ```
-Client                          Microservice
-  |                                  |
-  |  zmq REQ: {"input": null}       |
-  |--------------------------------->|
-  |                                  |  select random quote
-  |  zmq REP: {"quote": "..."}      |
-  |<---------------------------------|
-  |                                  |
+Frontend                    Flask (app.py)                   Groq LLM
+  |                              |                               |
+  |  GET /quote                  |                               |
+  |----------------------------->|                               |
+  |                              |  generate quote request       |
+  |                              |------------------------------>|
+  |                              |  quote response               |
+  |                              |<------------------------------|
+  |                              |  (fallback to local pool      |
+  |                              |   if LLM fails)               |
+  |  200: {"quote": "..."}      |                               |
+  |<-----------------------------|                               |
+  |                              |                               |
 ```
